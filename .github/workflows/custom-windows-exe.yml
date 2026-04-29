@@ -15,7 +15,7 @@ on:
         description: "Upload signed install.exe and .msi packages to a GitHub release"
         required: false
         type: boolean
-        default: false
+        default: true
   push:
     branches:
       - no-auto-api-server-probe
@@ -255,12 +255,18 @@ jobs:
             package-output/*.msi
 
       - name: Publish private release assets
-        if: ${{ inputs.publish_release }}
+        if: ${{ github.event_name == 'push' || inputs.publish_release }}
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.package.outputs.version }}
           name: RustDesk custom ${{ steps.package.outputs.version }}
-          prerelease: true
+          body: |
+            Custom cgissing build with automatic API-server derivation/probe from custom rendezvous servers disabled.
+
+            Source commit: ${{ github.sha }}
+          prerelease: false
+          overwrite_files: true
+          fail_on_unmatched_files: true
           files: |
             package-output/*.exe
             package-output/*.msi

@@ -12,6 +12,16 @@
 > **Misuse Disclaimer:** <br>
 > The developers of RustDesk do not condone or support any unethical or illegal use of this software. Misuse, such as unauthorized access, control or invasion of privacy, is strictly against our guidelines. The authors are not responsible for any misuse of the application.
 
+## Custom Fork Notice
+
+This fork is the cgissing custom build of RustDesk. It is published with source code and GitHub Actions build scripts in this repository.
+
+The custom build disables the automatic API-server derivation/probe from a custom rendezvous server. Custom rendezvous and relay remote desktop connections remain supported, but the client does not infer a companion API server from the configured rendezvous server.
+
+Windows package builds are produced by GitHub Actions and published to this fork's Releases page after a successful build:
+
+[**CUSTOM BINARY DOWNLOAD**](https://github.com/cgissing/rustdesk/releases)
+
 
 Chat with us: [Discord](https://discord.gg/nDceKgxnkV) | [Twitter](https://twitter.com/rustdesk) | [Reddit](https://www.reddit.com/r/rustdesk) | [YouTube](https://www.youtube.com/@rustdesk)
 
@@ -25,7 +35,7 @@ RustDesk welcomes contribution from everyone. See [CONTRIBUTING.md](docs/CONTRIB
 
 [**FAQ**](https://github.com/rustdesk/rustdesk/wiki/FAQ)
 
-[**BINARY DOWNLOAD**](https://github.com/rustdesk/rustdesk/releases)
+[**UPSTREAM BINARY DOWNLOAD**](https://github.com/rustdesk/rustdesk/releases)
 
 [**NIGHTLY BUILD**](https://github.com/rustdesk/rustdesk/releases/tag/nightly)
 
