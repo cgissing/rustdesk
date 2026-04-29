@@ -1,4 +1,4 @@
-name: Build Custom Windows EXE
+name: Build Custom Windows Packages
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
         required: false
         default: "cgissing/rustdesk"
       publish_release:
-        description: "Upload rustdesk-<version>-x86_64.exe to a GitHub release"
+        description: "Upload signed install.exe and .msi packages to a GitHub release"
         required: false
         type: boolean
         default: false
@@ -39,7 +39,7 @@ jobs:
       rustdesk_ref: ${{ inputs.rustdesk_ref || github.ref }}
 
   build-windows-x64:
-    name: build windows x64 exe
+    name: build windows x64 packages
     needs: generate-bridge
     runs-on: windows-2022
 
@@ -135,7 +135,17 @@ jobs:
         shell: bash
         run: cargo test --lib test_get_api_server
 
-      - name: Build RustDesk Windows EXE
+      - name: Prepare package version
+        id: package
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path .\Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          New-Item -ItemType Directory -Force -Path .\package-output | Out-Null
+          Get-Item .\package-output | Format-List FullName
+
+      - name: Build RustDesk Windows binaries
         shell: pwsh
         run: |
           python3 .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
@@ -145,20 +155,11 @@ jobs:
           Move-Item .\flutter\build\windows\x64\runner\Release .\rustdesk
           Get-ChildItem .\rustdesk\rustdesk.exe | Format-List FullName,Length
 
-      - name: Sign Windows binaries
+      - name: Prepare signing inputs
         shell: pwsh
         env:
           CUSTOM_WINDOWS_PFX_BASE64: ${{ secrets.CUSTOM_WINDOWS_PFX_BASE64 }}
-          CUSTOM_WINDOWS_PFX_PASSWORD: ${{ secrets.CUSTOM_WINDOWS_PFX_PASSWORD }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:CUSTOM_WINDOWS_PFX_BASE64)) {
-            Write-Host "CUSTOM_WINDOWS_PFX_BASE64 is not set; skipping Authenticode signing."
-            exit 0
-          }
-          if ([string]::IsNullOrWhiteSpace($env:CUSTOM_WINDOWS_PFX_PASSWORD)) {
-            throw "CUSTOM_WINDOWS_PFX_PASSWORD must be set when CUSTOM_WINDOWS_PFX_BASE64 is set."
-          }
-          [System.IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:CUSTOM_WINDOWS_PFX_BASE64))
           $windowsKits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
           $signtool = Get-ChildItem -Path $windowsKits -Recurse -Filter signtool.exe |
             Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
@@ -167,37 +168,107 @@ jobs:
           if (-not $signtool) {
             throw "signtool.exe was not found under $windowsKits"
           }
+          "SIGNTOOL_PATH=$($signtool.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "Using signtool: $($signtool.FullName)"
+          if (-not [string]::IsNullOrWhiteSpace($env:CUSTOM_WINDOWS_PFX_BASE64)) {
+            [System.IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:CUSTOM_WINDOWS_PFX_BASE64))
+            Write-Host "Prepared cert.pfx for signing."
+          } else {
+            Write-Host "CUSTOM_WINDOWS_PFX_BASE64 is not set; package signing will be skipped."
+          }
+
+      - name: Sign Windows binaries
+        shell: pwsh
+        env:
+          CUSTOM_WINDOWS_PFX_PASSWORD: ${{ secrets.CUSTOM_WINDOWS_PFX_PASSWORD }}
+        run: |
+          if (-not (Test-Path .\cert.pfx)) {
+            Write-Host "CUSTOM_WINDOWS_PFX_BASE64 is not set; skipping Authenticode signing."
+            exit 0
+          }
+          if ([string]::IsNullOrWhiteSpace($env:CUSTOM_WINDOWS_PFX_PASSWORD)) {
+            throw "CUSTOM_WINDOWS_PFX_PASSWORD must be set when CUSTOM_WINDOWS_PFX_BASE64 is set."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:SIGNTOOL_PATH) -or -not (Test-Path $env:SIGNTOOL_PATH)) {
+            throw "SIGNTOOL_PATH is not available."
+          }
           $files = Get-ChildItem .\rustdesk -Recurse -Include *.exe,*.dll
           foreach ($file in $files) {
-            & $signtool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f cert.pfx /p $env:CUSTOM_WINDOWS_PFX_PASSWORD $file.FullName
+            & $env:SIGNTOOL_PATH sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f cert.pfx /p $env:CUSTOM_WINDOWS_PFX_PASSWORD $file.FullName
           }
           Get-AuthenticodeSignature .\rustdesk\rustdesk.exe | Format-List
-          Remove-Item cert.pfx -Force
 
-      - name: Prepare release asset
-        id: package
+      - name: Build self-extracted installer
+        shell: bash
+        run: |
+          sed -i '/dpiAware/d' res/manifest.xml
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          popd
+          mv ./target/release/rustdesk-portable-packer.exe ./package-output/rustdesk-${{ env.VERSION }}-install.exe
+          ls -l ./package-output/rustdesk-${{ env.VERSION }}-install.exe
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build MSI installer
         shell: pwsh
         run: |
-          $version = (Select-String -Path .\Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
-          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Copy-Item .\rustdesk\rustdesk.exe ".\rustdesk-$version-x86_64.exe" -Force
-          Get-Item ".\rustdesk-$version-x86_64.exe" | Format-List FullName,Length
+          Push-Location .\res\msi
+          python .\preprocess.py --arp -d ..\..\rustdesk
+          nuget restore .\msi.sln
+          msbuild .\msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+          Move-Item .\Package\bin\x64\Release\en-us\Package.msi "..\..\package-output\rustdesk-${env:VERSION}-x64.msi" -Force
+          Pop-Location
+          Get-Item ".\package-output\rustdesk-${env:VERSION}-x64.msi" | Format-List FullName,Length
 
-      - name: Upload Windows EXE artifact
+      - name: Sign installer packages
+        shell: pwsh
+        env:
+          CUSTOM_WINDOWS_PFX_PASSWORD: ${{ secrets.CUSTOM_WINDOWS_PFX_PASSWORD }}
+        run: |
+          if (-not (Test-Path .\cert.pfx)) {
+            Write-Host "CUSTOM_WINDOWS_PFX_BASE64 is not set; skipping installer signing."
+            exit 0
+          }
+          if ([string]::IsNullOrWhiteSpace($env:CUSTOM_WINDOWS_PFX_PASSWORD)) {
+            throw "CUSTOM_WINDOWS_PFX_PASSWORD must be set when CUSTOM_WINDOWS_PFX_BASE64 is set."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:SIGNTOOL_PATH) -or -not (Test-Path $env:SIGNTOOL_PATH)) {
+            throw "SIGNTOOL_PATH is not available."
+          }
+          $packages = Get-ChildItem .\package-output -File | Where-Object { $_.Extension -in '.exe', '.msi' }
+          foreach ($package in $packages) {
+            & $env:SIGNTOOL_PATH sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f cert.pfx /p $env:CUSTOM_WINDOWS_PFX_PASSWORD $package.FullName
+            Get-AuthenticodeSignature $package.FullName | Format-List
+          }
+          Get-ChildItem .\package-output | Format-List FullName,Length
+
+      - name: Upload Windows package artifact
         uses: actions/upload-artifact@v4
         with:
           name: rustdesk-custom-windows-x64
           path: |
             rustdesk/**
-            rustdesk-${{ env.VERSION }}-x86_64.exe
+            package-output/*.exe
+            package-output/*.msi
 
-      - name: Publish private release asset
+      - name: Publish private release assets
         if: ${{ inputs.publish_release }}
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.package.outputs.version }}
           name: RustDesk custom ${{ steps.package.outputs.version }}
           prerelease: true
-          files: rustdesk-${{ steps.package.outputs.version }}-x86_64.exe
+          files: |
+            package-output/*.exe
+            package-output/*.msi
+
+      - name: Clean signing certificate
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          if (Test-Path .\cert.pfx) {
+            Remove-Item .\cert.pfx -Force
+          }
