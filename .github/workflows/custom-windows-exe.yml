@@ -2,12 +2,26 @@ name: Build Custom Windows EXE
 
 on:
   workflow_dispatch:
+    inputs:
+      rustdesk_ref:
+        description: "Fork branch, tag, or SHA to build"
+        required: false
+        default: ""
+      custom_update_repo:
+        description: "Repository used by private update checks, owner/repo"
+        required: false
+        default: "cgissing/rustdesk"
+      publish_release:
+        description: "Upload rustdesk-<version>-x86_64.exe to a GitHub release"
+        required: false
+        type: boolean
+        default: false
   push:
     branches:
       - no-auto-api-server-probe
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   RUST_VERSION: "1.75"
@@ -15,10 +29,13 @@ env:
   LLVM_VERSION: "15.0.6"
   VCPKG_COMMIT_ID: "120deac3062162151622ca4860575a33844ba10b"
   VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  RUSTDESK_CUSTOM_UPDATE_REPO: ${{ inputs.custom_update_repo || 'cgissing/rustdesk' }}
 
 jobs:
   generate-bridge:
     uses: ./.github/workflows/bridge.yml
+    with:
+      rustdesk_ref: ${{ inputs.rustdesk_ref || github.ref }}
 
   build-windows-x64:
     name: build windows x64 exe
@@ -36,7 +53,12 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.rustdesk_ref || github.ref }}
           submodules: recursive
+
+      - name: Apply custom API-server patch
+        shell: pwsh
+        run: .\scripts\custom-build\apply-no-auto-api-probe.ps1
 
       - name: Restore bridge files
         uses: actions/download-artifact@v4
@@ -122,8 +144,50 @@ jobs:
           Move-Item .\flutter\build\windows\x64\runner\Release .\rustdesk
           Get-ChildItem .\rustdesk\rustdesk.exe | Format-List FullName,Length
 
+      - name: Sign Windows binaries
+        shell: pwsh
+        env:
+          CUSTOM_WINDOWS_PFX_BASE64: ${{ secrets.CUSTOM_WINDOWS_PFX_BASE64 }}
+          CUSTOM_WINDOWS_PFX_PASSWORD: ${{ secrets.CUSTOM_WINDOWS_PFX_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CUSTOM_WINDOWS_PFX_BASE64)) {
+            Write-Host "CUSTOM_WINDOWS_PFX_BASE64 is not set; skipping Authenticode signing."
+            exit 0
+          }
+          if ([string]::IsNullOrWhiteSpace($env:CUSTOM_WINDOWS_PFX_PASSWORD)) {
+            throw "CUSTOM_WINDOWS_PFX_PASSWORD must be set when CUSTOM_WINDOWS_PFX_BASE64 is set."
+          }
+          [System.IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:CUSTOM_WINDOWS_PFX_BASE64))
+          $files = Get-ChildItem .\rustdesk -Recurse -Include *.exe,*.dll
+          foreach ($file in $files) {
+            & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f cert.pfx /p $env:CUSTOM_WINDOWS_PFX_PASSWORD $file.FullName
+          }
+          Get-AuthenticodeSignature .\rustdesk\rustdesk.exe | Format-List
+          Remove-Item cert.pfx -Force
+
+      - name: Prepare release asset
+        id: package
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path .\Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Copy-Item .\rustdesk\rustdesk.exe ".\rustdesk-$version-x86_64.exe" -Force
+          Get-Item ".\rustdesk-$version-x86_64.exe" | Format-List FullName,Length
+
       - name: Upload Windows EXE artifact
         uses: actions/upload-artifact@v4
         with:
           name: rustdesk-custom-windows-x64
-          path: rustdesk/**
+          path: |
+            rustdesk/**
+            rustdesk-${{ env.VERSION }}-x86_64.exe
+
+      - name: Publish private release asset
+        if: ${{ inputs.publish_release }}
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.package.outputs.version }}
+          name: RustDesk custom ${{ steps.package.outputs.version }}
+          prerelease: true
+          files: rustdesk-${{ steps.package.outputs.version }}-x86_64.exe

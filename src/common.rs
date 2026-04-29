@@ -953,34 +953,60 @@ pub fn check_software_update() {
 // Because the url is always `https://api.rustdesk.com/version/latest`.
 #[tokio::main(flavor = "current_thread")]
 pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
-    let (request, url) =
-        hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
     let proxy_conf = Config::get_socks();
-    let tls_url = get_url_for_tls(&url, &proxy_conf);
-    let tls_type = get_cached_tls_type(tls_url);
-    let is_tls_not_cached = tls_type.is_none();
-    let tls_type = tls_type.unwrap_or(TlsType::Rustls);
-    let client = create_http_client_async(tls_type, false);
-    let latest_release_response = match client.post(&url).json(&request).send().await {
-        Ok(resp) => {
-            upsert_tls_cache(tls_url, tls_type, false);
-            resp
-        }
-        Err(err) => {
-            if is_tls_not_cached && err.is_request() {
-                let tls_type = TlsType::NativeTls;
-                let client = create_http_client_async(tls_type, false);
-                let resp = client.post(&url).json(&request).send().await?;
+    let response_url = if let Some(url) = custom_update_latest_url() {
+        let tls_url = get_url_for_tls(&url, &proxy_conf);
+        let tls_type = get_cached_tls_type(tls_url);
+        let is_tls_not_cached = tls_type.is_none();
+        let tls_type = tls_type.unwrap_or(TlsType::Rustls);
+        let client = create_http_client_async(tls_type, false);
+        let latest_release_response = match client.get(&url).send().await {
+            Ok(resp) => {
                 upsert_tls_cache(tls_url, tls_type, false);
                 resp
-            } else {
-                return Err(err.into());
             }
-        }
+            Err(err) => {
+                if is_tls_not_cached && err.is_request() {
+                    let tls_type = TlsType::NativeTls;
+                    let client = create_http_client_async(tls_type, false);
+                    let resp = client.get(&url).send().await?;
+                    upsert_tls_cache(tls_url, tls_type, false);
+                    resp
+                } else {
+                    return Err(err.into());
+                }
+            }
+        };
+        latest_release_response.url().to_string()
+    } else {
+        let (request, url) =
+            hbb_common::version_check_request(hbb_common::VER_TYPE_RUSTDESK_CLIENT.to_string());
+        let tls_url = get_url_for_tls(&url, &proxy_conf);
+        let tls_type = get_cached_tls_type(tls_url);
+        let is_tls_not_cached = tls_type.is_none();
+        let tls_type = tls_type.unwrap_or(TlsType::Rustls);
+        let client = create_http_client_async(tls_type, false);
+        let latest_release_response = match client.post(&url).json(&request).send().await {
+            Ok(resp) => {
+                upsert_tls_cache(tls_url, tls_type, false);
+                resp
+            }
+            Err(err) => {
+                if is_tls_not_cached && err.is_request() {
+                    let tls_type = TlsType::NativeTls;
+                    let client = create_http_client_async(tls_type, false);
+                    let resp = client.post(&url).json(&request).send().await?;
+                    upsert_tls_cache(tls_url, tls_type, false);
+                    resp
+                } else {
+                    return Err(err.into());
+                }
+            }
+        };
+        let bytes = latest_release_response.bytes().await?;
+        let resp: hbb_common::VersionCheckResponse = serde_json::from_slice(&bytes)?;
+        resp.url
     };
-    let bytes = latest_release_response.bytes().await?;
-    let resp: hbb_common::VersionCheckResponse = serde_json::from_slice(&bytes)?;
-    let response_url = resp.url;
     let latest_release_version = response_url.rsplit('/').next().unwrap_or_default();
 
     if get_version_number(&latest_release_version) > get_version_number(crate::VERSION) {
@@ -998,6 +1024,19 @@ pub async fn do_check_software_update() -> hbb_common::ResultType<()> {
         *SOFTWARE_UPDATE_URL.lock().unwrap() = "".to_string();
     }
     Ok(())
+}
+
+fn custom_update_latest_url() -> Option<String> {
+    option_env!("RUSTDESK_CUSTOM_UPDATE_REPO")
+        .and_then(custom_update_latest_url_from_repo)
+}
+
+fn custom_update_latest_url_from_repo(repo: &str) -> Option<String> {
+    let repo = repo.trim().trim_matches('/');
+    if repo.is_empty() {
+        return None;
+    }
+    Some(format!("https://github.com/{repo}/releases/latest"))
 }
 
 #[inline]
@@ -2805,6 +2844,20 @@ mod tests {
             get_api_server_("".to_owned(), "".to_owned()),
             "https://admin.rustdesk.com"
         );
+    }
+
+    #[test]
+    fn test_custom_update_latest_url_from_repo() {
+        assert_eq!(
+            custom_update_latest_url_from_repo("cgissing/rustdesk"),
+            Some("https://github.com/cgissing/rustdesk/releases/latest".to_owned())
+        );
+        assert_eq!(
+            custom_update_latest_url_from_repo(" /cgissing/rustdesk/ "),
+            Some("https://github.com/cgissing/rustdesk/releases/latest".to_owned())
+        );
+        assert_eq!(custom_update_latest_url_from_repo(""), None);
+        assert_eq!(custom_update_latest_url_from_repo("   "), None);
     }
 
     #[test]

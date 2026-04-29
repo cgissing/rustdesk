@@ -13,6 +13,7 @@ src/version.rs
 *exe
 *tgz
 cert.pfx
+custom-signing/
 *.bak
 *png
 *svg
