@@ -158,9 +158,18 @@ jobs:
             throw "CUSTOM_WINDOWS_PFX_PASSWORD must be set when CUSTOM_WINDOWS_PFX_BASE64 is set."
           }
           [System.IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:CUSTOM_WINDOWS_PFX_BASE64))
+          $windowsKits = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+          $signtool = Get-ChildItem -Path $windowsKits -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signtool) {
+            throw "signtool.exe was not found under $windowsKits"
+          }
+          Write-Host "Using signtool: $($signtool.FullName)"
           $files = Get-ChildItem .\rustdesk -Recurse -Include *.exe,*.dll
           foreach ($file in $files) {
-            & signtool sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f cert.pfx /p $env:CUSTOM_WINDOWS_PFX_PASSWORD $file.FullName
+            & $signtool.FullName sign /fd SHA256 /td SHA256 /tr http://timestamp.digicert.com /f cert.pfx /p $env:CUSTOM_WINDOWS_PFX_PASSWORD $file.FullName
           }
           Get-AuthenticodeSignature .\rustdesk\rustdesk.exe | Format-List
           Remove-Item cert.pfx -Force
