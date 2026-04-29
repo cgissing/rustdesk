@@ -1072,14 +1072,8 @@ fn get_api_server_(api: String, custom: String) -> String {
     if !api.is_empty() {
         return api.to_owned();
     }
-    let s0 = get_custom_rendezvous_server(custom);
-    if !s0.is_empty() {
-        let s = crate::increase_port(&s0, -2);
-        if s == s0 {
-            return format!("http://{}:{}", s, config::RENDEZVOUS_PORT - 2);
-        } else {
-            return format!("http://{}", s);
-        }
+    if !custom.is_empty() {
+        return "".to_owned();
     }
     "https://admin.rustdesk.com".to_owned()
 }
@@ -2784,6 +2778,33 @@ mod tests {
         assert!(!is_public("localhost"));
         assert!(!is_public("https://rustdesk.computer.com"));
         assert!(!is_public("rustdesk.comhello.com"));
+    }
+
+    #[test]
+    fn test_get_api_server_does_not_infer_from_custom_rendezvous_server() {
+        assert_eq!(
+            get_api_server_("".to_owned(), "59.110.112.192:21316".to_owned()),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_get_api_server_keeps_explicit_api_server_with_custom_rendezvous_server() {
+        assert_eq!(
+            get_api_server_(
+                "http://59.110.112.192:21314".to_owned(),
+                "59.110.112.192:21316".to_owned()
+            ),
+            "http://59.110.112.192:21314"
+        );
+    }
+
+    #[test]
+    fn test_get_api_server_uses_default_public_api_without_custom_rendezvous_server() {
+        assert_eq!(
+            get_api_server_("".to_owned(), "".to_owned()),
+            "https://admin.rustdesk.com"
+        );
     }
 
     #[test]
