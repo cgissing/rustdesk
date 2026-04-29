@@ -110,7 +110,7 @@ jobs:
 
       - name: Run API server regression tests
         shell: bash
-        run: cargo test --lib test_get_api_server --no-default-features
+        run: cargo test --lib test_get_api_server
 
       - name: Build RustDesk Windows EXE
         shell: pwsh
