@@ -19,6 +19,7 @@ on:
   push:
     branches:
       - no-auto-api-server-probe
+      - custom-*
 
 permissions:
   contents: write

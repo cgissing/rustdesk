@@ -2,6 +2,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$UpstreamRef,
     [string]$BranchName = "",
+    [string]$UpstreamRemote = "origin",
+    [string]$PatchRemote = "origin",
     [string]$PatchBranch = "no-auto-api-server-probe",
     [string]$SourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 )
@@ -16,6 +18,41 @@ function Invoke-Git {
     }
 }
 
+function Get-GitOutput {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
+    $output = @(& git -C $SourceRoot @Args 2>$null)
+    if ($LASTEXITCODE -ne 0) {
+        return ""
+    }
+    return ($output -join "`n").Trim()
+}
+
+function Resolve-GitCommit {
+    param([Parameter(Mandatory = $true)][string]$Ref)
+
+    $candidates = @("FETCH_HEAD", $Ref)
+    if ($Ref -notmatch '^refs/') {
+        $candidates += @("refs/tags/$Ref", "refs/remotes/$UpstreamRemote/$Ref", "$UpstreamRemote/$Ref")
+    }
+
+    foreach ($candidate in $candidates) {
+        $commit = Get-GitOutput rev-parse --verify "$candidate^{commit}"
+        if (-not [string]::IsNullOrWhiteSpace($commit)) {
+            return $commit
+        }
+    }
+
+    return ""
+}
+
+function Ensure-FullHistory {
+    $isShallow = Get-GitOutput rev-parse --is-shallow-repository
+    if ($isShallow -eq "true") {
+        Write-Host "Repository is shallow; fetching full history from $UpstreamRemote."
+        Invoke-Git fetch --unshallow $UpstreamRemote --tags
+    }
+}
+
 $status = & git -C $SourceRoot status --porcelain
 if ($status) {
     throw "Working tree is not clean. Commit or stash changes before preparing a release branch."
@@ -26,15 +63,26 @@ if ([string]::IsNullOrWhiteSpace($BranchName)) {
     $BranchName = "custom-$safeRef"
 }
 
-Invoke-Git fetch origin $UpstreamRef
-Invoke-Git switch --create $BranchName FETCH_HEAD
+Ensure-FullHistory
 
-$base = (& git -C $SourceRoot merge-base origin/master $PatchBranch).Trim()
-if ([string]::IsNullOrWhiteSpace($base)) {
-    throw "Could not find merge-base between origin/master and $PatchBranch"
+Invoke-Git fetch $UpstreamRemote $UpstreamRef
+$upstreamTip = Resolve-GitCommit $UpstreamRef
+if ([string]::IsNullOrWhiteSpace($upstreamTip)) {
+    throw "Could not resolve $UpstreamRemote/$UpstreamRef"
 }
 
-Invoke-Git cherry-pick "$base..$PatchBranch"
+$patchFetchSpec = "${PatchBranch}:refs/remotes/$PatchRemote/$PatchBranch"
+Invoke-Git fetch $PatchRemote $patchFetchSpec
+$patchRef = "refs/remotes/$PatchRemote/$PatchBranch"
+
+$base = Get-GitOutput merge-base $upstreamTip $patchRef
+if ([string]::IsNullOrWhiteSpace($base)) {
+    throw "Could not find merge-base between $UpstreamRemote/$UpstreamRef and $PatchRemote/$PatchBranch"
+}
+
+Invoke-Git switch --create $BranchName $upstreamTip
+
+Invoke-Git cherry-pick "$base..$patchRef"
 
 & (Join-Path $PSScriptRoot 'apply-no-auto-api-probe.ps1') -SourceRoot $SourceRoot
 if ($LASTEXITCODE -ne 0) {

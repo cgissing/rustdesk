@@ -1,0 +1,85 @@
+name: Follow Upstream RustDesk Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: "Optional upstream RustDesk tag, branch, or SHA. Empty means latest release."
+        required: false
+        default: ""
+      branch_name:
+        description: "Optional custom branch name. Empty means custom-<upstream_ref>."
+        required: false
+        default: ""
+      custom_update_repo:
+        description: "Repository used by private update checks, owner/repo"
+        required: false
+        default: "cgissing/rustdesk"
+      rebuild_existing:
+        description: "Dispatch a build even if the custom branch already exists"
+        required: false
+        type: boolean
+        default: false
+      publish_release:
+        description: "Ask the Windows build workflow to publish a prerelease asset"
+        required: false
+        type: boolean
+        default: true
+      dry_run:
+        description: "Validate release detection without creating branches or dispatching builds"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  follow-upstream-release:
+    name: prepare custom release branch and dispatch build
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout custom build branch
+        uses: actions/checkout@v4
+        with:
+          ref: no-auto-api-server-probe
+          fetch-depth: 0
+
+      - name: Configure Git identity
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Prepare upstream release branch and dispatch build
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          UPSTREAM_REF: ${{ inputs.upstream_ref || '' }}
+          BRANCH_NAME: ${{ inputs.branch_name || '' }}
+          CUSTOM_UPDATE_REPO: ${{ inputs.custom_update_repo || 'cgissing/rustdesk' }}
+          REBUILD_EXISTING: ${{ inputs.rebuild_existing || false }}
+          PUBLISH_RELEASE: ${{ github.event_name == 'schedule' || inputs.publish_release }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: |
+          $rebuildExisting = [System.Convert]::ToBoolean("${env:REBUILD_EXISTING}")
+          $publishRelease = [System.Convert]::ToBoolean("${env:PUBLISH_RELEASE}")
+          $dryRun = [System.Convert]::ToBoolean("${env:DRY_RUN}")
+
+          .\scripts\custom-build\start-upstream-release-build.ps1 `
+            -UpstreamRef "${env:UPSTREAM_REF}" `
+            -BranchName "${env:BRANCH_NAME}" `
+            -PatchBranch 'no-auto-api-server-probe' `
+            -PatchRemote 'origin' `
+            -UpstreamRemote 'upstream' `
+            -PushRemote 'origin' `
+            -CustomUpdateRepo "${env:CUSTOM_UPDATE_REPO}" `
+            -RebuildExisting:$rebuildExisting `
+            -PublishRelease:$publishRelease `
+            -DryRun:$dryRun `
+            -Repository '${{ github.repository }}' `
+            -BuildWorkflowFile 'custom-windows-exe.yml'
