@@ -100,13 +100,25 @@ if ([string]::IsNullOrWhiteSpace($BranchName)) {
     $BranchName = "custom-$safeRef"
 }
 
+$releaseTag = $UpstreamRef -replace '^refs/tags/', ''
+$existingReleaseTagOutput = @(& git -C $SourceRoot ls-remote --tags $PushRemote $releaseTag)
+if ($LASTEXITCODE -ne 0) {
+    throw "git ls-remote --tags $PushRemote $releaseTag failed"
+}
+$existingReleaseTag = ($existingReleaseTagOutput -join "`n").Trim()
+if ($existingReleaseTag -and -not $RebuildExisting) {
+    Write-Host "Release tag $releaseTag already exists on $PushRemote."
+    Add-StepSummary "Release tag ``$releaseTag`` already exists; no branch or build was dispatched."
+    exit 0
+}
+
 if (-not (& git -C $SourceRoot remote | Where-Object { $_ -eq $UpstreamRemote })) {
     Invoke-Git remote add $UpstreamRemote https://github.com/rustdesk/rustdesk.git
 }
 
 $patchFetchSpec = "${PatchBranch}:refs/remotes/$PatchRemote/$PatchBranch"
 Invoke-Git fetch $PatchRemote $patchFetchSpec
-Invoke-Git fetch $UpstreamRemote --tags --prune
+Invoke-Git fetch --no-tags --prune $UpstreamRemote "+refs/heads/*:refs/remotes/$UpstreamRemote/*"
 
 $existingBranchOutput = @(& git -C $SourceRoot ls-remote --heads $PushRemote $BranchName)
 if ($LASTEXITCODE -ne 0) {
