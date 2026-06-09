@@ -6,6 +6,7 @@ param(
     [string]$SourceRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
     [string]$UpstreamRemote = "upstream",
     [string]$PushRemote = "origin",
+    [string]$SourceRepository = "rustdesk/rustdesk",
     [string]$CustomUpdateRepo = "cgissing/rustdesk",
     [bool]$PublishRelease = $true,
     [bool]$RebuildExisting = $false,
@@ -60,9 +61,10 @@ function Invoke-BuildWorkflowDispatch {
         'X-GitHub-Api-Version' = '2022-11-28'
     }
     $body = @{
-        ref = $Ref
+        ref = $PatchBranch
         inputs = @{
             rustdesk_ref = $Ref
+            source_repository = $SourceRepository
             custom_update_repo = $CustomUpdateRepo
             publish_release = $PublishRelease.ToString().ToLowerInvariant()
         }
@@ -70,7 +72,7 @@ function Invoke-BuildWorkflowDispatch {
 
     $uri = "https://api.github.com/repos/$Repository/actions/workflows/$BuildWorkflowFile/dispatches"
     Invoke-RestMethod -Uri $uri -Headers $headers -Method Post -Body $body -ContentType 'application/json'
-    Write-Host "Dispatched $BuildWorkflowFile for $Ref in $Repository."
+    Write-Host "Dispatched $BuildWorkflowFile on $PatchBranch for $SourceRepository@$Ref in $Repository."
 }
 
 function Add-StepSummary {
@@ -85,19 +87,9 @@ if ($status) {
     throw "Working tree is not clean. Refusing to prepare an upstream release branch."
 }
 
-if ([string]::IsNullOrWhiteSpace($PatchRemote)) {
-    $PatchRemote = $PushRemote
-}
-
 if ([string]::IsNullOrWhiteSpace($UpstreamRef)) {
     $UpstreamRef = Get-LatestRustDeskReleaseTag
     Write-Host "Detected latest upstream RustDesk release: $UpstreamRef"
-}
-
-if ([string]::IsNullOrWhiteSpace($BranchName)) {
-    $safeRef = $UpstreamRef -replace '^refs/tags/', ''
-    $safeRef = $safeRef -replace '[^A-Za-z0-9._-]+', '-'
-    $BranchName = "custom-$safeRef"
 }
 
 $releaseTag = $UpstreamRef -replace '^refs/tags/', ''
@@ -112,58 +104,14 @@ if ($existingReleaseTag -and -not $RebuildExisting) {
     exit 0
 }
 
-if (-not (& git -C $SourceRoot remote | Where-Object { $_ -eq $UpstreamRemote })) {
-    Invoke-Git remote add $UpstreamRemote https://github.com/rustdesk/rustdesk.git
-}
-
-$patchFetchSpec = "${PatchBranch}:refs/remotes/$PatchRemote/$PatchBranch"
-Invoke-Git fetch $PatchRemote $patchFetchSpec
-Invoke-Git fetch --no-tags --prune $UpstreamRemote "+refs/heads/*:refs/remotes/$UpstreamRemote/*"
-
-$existingBranchOutput = @(& git -C $SourceRoot ls-remote --heads $PushRemote $BranchName)
-if ($LASTEXITCODE -ne 0) {
-    throw "git ls-remote --heads $PushRemote $BranchName failed"
-}
-$existingBranch = ($existingBranchOutput -join "`n").Trim()
-if ($existingBranch) {
-    Write-Host "Branch $BranchName already exists on $PushRemote."
-    Add-StepSummary "Branch ``$BranchName`` already exists for upstream ref ``$UpstreamRef``."
-    if (-not $RebuildExisting) {
-        Write-Host 'RebuildExisting is false; no build was dispatched.'
-        Add-StepSummary 'No build was dispatched because rebuild_existing is false.'
-        exit 0
-    }
-    if ($DryRun) {
-        Write-Host "Dry run: would dispatch build for existing branch $BranchName."
-        exit 0
-    }
-    if (-not $NoDispatch) {
-        Invoke-BuildWorkflowDispatch -Ref $BranchName
-        Add-StepSummary "Dispatched build workflow for existing branch ``$BranchName``."
-    }
-    exit 0
-}
-
 if ($DryRun) {
-    Write-Host "Dry run: would create $BranchName from $UpstreamRemote/$UpstreamRef, push to $PushRemote, and dispatch build."
+    Write-Host "Dry run: would dispatch $BuildWorkflowFile for $SourceRepository@$UpstreamRef on workflow ref $PatchBranch."
     exit 0
 }
-
-& (Join-Path $PSScriptRoot 'prepare-release-branch.ps1') `
-    -UpstreamRef $UpstreamRef `
-    -BranchName $BranchName `
-    -UpstreamRemote $UpstreamRemote `
-    -PatchRemote $PatchRemote `
-    -PatchBranch $PatchBranch `
-    -SourceRoot $SourceRoot
-if ($LASTEXITCODE -ne 0) {
-    throw "prepare-release-branch.ps1 failed"
-}
-
-Invoke-Git push $PushRemote $BranchName
-Add-StepSummary "Created and pushed branch ``$BranchName`` from upstream ref ``$UpstreamRef``."
 
 if (-not $NoDispatch) {
-    Invoke-BuildWorkflowDispatch -Ref $BranchName
-    Add-StepSummary "Dispatched build workflow for ``$BranchName``."
+    Invoke-BuildWorkflowDispatch -Ref $UpstreamRef
+    Add-StepSummary "Dispatched build workflow for ``$SourceRepository@$UpstreamRef``."
+} else {
+    Add-StepSummary "NoDispatch is true; build workflow was not dispatched for ``$SourceRepository@$UpstreamRef``."
 }

@@ -7,10 +7,6 @@ on:
         description: "Optional upstream RustDesk tag, branch, or SHA. Empty means latest release."
         required: false
         default: ""
-      branch_name:
-        description: "Optional custom branch name. Empty means custom-<upstream_ref>."
-        required: false
-        default: ""
       custom_update_repo:
         description: "Repository used by private update checks, owner/repo"
         required: false
@@ -60,7 +56,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           UPSTREAM_REF: ${{ inputs.upstream_ref || '' }}
-          BRANCH_NAME: ${{ inputs.branch_name || '' }}
           CUSTOM_UPDATE_REPO: ${{ inputs.custom_update_repo || 'cgissing/rustdesk' }}
           REBUILD_EXISTING: ${{ inputs.rebuild_existing || false }}
           PUBLISH_RELEASE: ${{ github.event_name == 'schedule' || inputs.publish_release }}
@@ -72,11 +67,9 @@ jobs:
 
           .\scripts\custom-build\start-upstream-release-build.ps1 `
             -UpstreamRef "${env:UPSTREAM_REF}" `
-            -BranchName "${env:BRANCH_NAME}" `
             -PatchBranch 'no-auto-api-server-probe' `
-            -PatchRemote 'origin' `
-            -UpstreamRemote 'upstream' `
             -PushRemote 'origin' `
+            -SourceRepository 'rustdesk/rustdesk' `
             -CustomUpdateRepo "${env:CUSTOM_UPDATE_REPO}" `
             -RebuildExisting:$rebuildExisting `
             -PublishRelease:$publishRelease `

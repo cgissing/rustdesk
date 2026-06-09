@@ -9,6 +9,10 @@ on:
         description: "Fork branch, tag, or SHA to build bridge files from"
         required: false
         type: string
+      source_repository:
+        description: "Repository to check out, owner/repo. Empty means this fork."
+        required: false
+        type: string
         default: ""
 
 env:
@@ -33,6 +37,7 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
         with:
+          repository: ${{ inputs.source_repository || github.repository }}
           ref: ${{ inputs.rustdesk_ref || github.ref }}
           submodules: recursive
 
