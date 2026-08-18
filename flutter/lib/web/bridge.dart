@@ -1644,78 +1644,6 @@ class RustdeskImpl {
     throw UnimplementedError("sendUrlScheme");
   }
 
-  Future<void> pluginEvent(
-      {required String id,
-      required String peer,
-      required Uint8List event,
-      dynamic hint}) {
-    throw UnimplementedError("pluginEvent");
-  }
-
-  Stream<EventToUI> pluginRegisterEventStream(
-      {required String id, dynamic hint}) {
-    throw UnimplementedError("pluginRegisterEventStream");
-  }
-
-  String? pluginGetSessionOption(
-      {required String id,
-      required String peer,
-      required String key,
-      dynamic hint}) {
-    throw UnimplementedError("pluginGetSessionOption");
-  }
-
-  Future<void> pluginSetSessionOption(
-      {required String id,
-      required String peer,
-      required String key,
-      required String value,
-      dynamic hint}) {
-    throw UnimplementedError("pluginSetSessionOption");
-  }
-
-  String? pluginGetSharedOption(
-      {required String id, required String key, dynamic hint}) {
-    throw UnimplementedError("pluginGetSharedOption");
-  }
-
-  Future<void> pluginSetSharedOption(
-      {required String id,
-      required String key,
-      required String value,
-      dynamic hint}) {
-    throw UnimplementedError("pluginSetSharedOption");
-  }
-
-  Future<void> pluginReload({required String id, dynamic hint}) {
-    throw UnimplementedError("pluginReload");
-  }
-
-  void pluginEnable({required String id, required bool v, dynamic hint}) {
-    throw UnimplementedError("pluginEnable");
-  }
-
-  bool pluginIsEnabled({required String id, dynamic hint}) {
-    throw UnimplementedError("pluginIsEnabled");
-  }
-
-  bool pluginFeatureIsEnabled({dynamic hint}) {
-    throw UnimplementedError("pluginFeatureIsEnabled");
-  }
-
-  Future<void> pluginSyncUi({required String syncTo, dynamic hint}) {
-    throw UnimplementedError("pluginSyncUi");
-  }
-
-  Future<void> pluginListReload({dynamic hint}) {
-    throw UnimplementedError("pluginListReload");
-  }
-
-  Future<void> pluginInstall(
-      {required String id, required bool b, dynamic hint}) {
-    throw UnimplementedError("pluginInstall");
-  }
-
   bool isSupportMultiUiSession({required String version, dynamic hint}) {
     return versionToNumber(v: version) > versionToNumber(v: '1.2.4');
   }
@@ -1729,7 +1657,7 @@ class RustdeskImpl {
   }
 
   String mainSupportedPrivacyModeImpls({dynamic hint}) {
-    throw UnimplementedError("mainSupportedPrivacyModeImpls");
+    return '[]';
   }
 
   String mainSupportedInputSource({dynamic hint}) {
@@ -1914,6 +1842,15 @@ class RustdeskImpl {
     throw UnimplementedError("sessionHandleScreenshot");
   }
 
+  Future<void> sessionSetCommon(
+      {required UuidValue sessionId, required String key, required String value, dynamic hint}) {
+      js.context.callMethod('setByName', [
+        'common',
+        jsonEncode({'name': key, 'value': value})
+      ]);
+      return Future.value();
+  }
+
   String? sessionGetCommonSync(
       {required UuidValue sessionId,
       required String key,
@@ -2034,7 +1971,14 @@ class RustdeskImpl {
   }
 
   String mainResolveAvatarUrl({required String avatar, dynamic hint}) {
-    return js.context.callMethod('getByName', ['resolve_avatar_url', avatar])?.toString() ?? avatar;
+    return js.context.callMethod(
+            'getByName', ['resolve_avatar_url', avatar])?.toString() ??
+        avatar;
+  }
+
+  Future<String> mainDeployDevice(
+      {required String token, required String id, dynamic hint}) {
+    throw UnimplementedError("mainDeployDevice");
   }
 
   void dispose() {}
